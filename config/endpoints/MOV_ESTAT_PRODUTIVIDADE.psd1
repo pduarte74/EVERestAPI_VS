@@ -15,7 +15,7 @@
     # SQL Table Schema
     TableSchema = @{
         Columns = @(
-            @{ Name = "Date"; Type = "NVARCHAR(8)"; PrimaryKey = $true }
+            @{ Name = "Date"; Type = "DATE"; PrimaryKey = $true }
             @{ Name = "Whrs"; Type = "NVARCHAR(10)"; PrimaryKey = $true }
             @{ Name = "Oprt"; Type = "NVARCHAR(20)"; PrimaryKey = $true }
             @{ Name = "WrkType"; Type = "NVARCHAR(10)"; PrimaryKey = $true }
