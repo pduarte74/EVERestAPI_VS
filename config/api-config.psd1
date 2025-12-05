@@ -10,22 +10,18 @@
         Username = "pduarte"
         Password = "Kik02006!"
     }
+
+    # SQL Server Configuration
+    SqlConnectionString = "Server=sql-os-prd-01.rede.local;Database=EVEReporting;Integrated Security=True;Encrypt=False;"
+    SqlTable = "dbo.WpmsApiResults"
     
     # API Endpoints to call
     Endpoints = @(
         @{
-            Name = "D0080Dread_all - With ARTC parameter"
-            Uri = "/Eve/api/WebService/D0080Dread_all"
-            Parameters = @{
-                ARTC = '{"val1":"1303394"}'
-            }
-        },
-        @{
-            Name = "D0081read_all - Simple ARTC"
-            Uri = "/Eve/api/WebService/D0081read_all"
-            Parameters = @{
-                ARTC = '{"val1":"1303394"}'
-            }
+            Name = "I0002read_I0002V03 - TM_USERS"
+            Uri = "/Eve/api/WebService/I0002read_I0002V03"
+            Parameters = @{}
+            TargetTable = "dbo.TM_USERS"
         }
     )
 }
