@@ -1,2 +1,5 @@
 logs/
 *.log
+
+# Encrypted password file
+config/secure-password.txt

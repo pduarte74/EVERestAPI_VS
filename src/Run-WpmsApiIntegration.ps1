@@ -395,8 +395,36 @@ if (-not $config.Server) {
     exit 1
 }
 
-if (-not $config.Credentials -or -not $config.Credentials.Username -or -not $config.Credentials.Password) {
+if (-not $config.Credentials -or -not $config.Credentials.Username) {
     Write-Log "Credentials not configured" -Level ERROR
+    exit 1
+}
+
+# Load password from secure file
+$password = $null
+if ($config.Credentials.SecurePasswordFile) {
+    $securePasswordPath = Join-Path (Split-Path -Parent $ConfigFile) $config.Credentials.SecurePasswordFile
+    if (Test-Path $securePasswordPath) {
+        try {
+            $encryptedPassword = Get-Content -Path $securePasswordPath | ConvertTo-SecureString
+            $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($encryptedPassword)
+            $password = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR)
+            [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($BSTR)
+        } catch {
+            Write-Log "Failed to decrypt password from secure file: $($_.Exception.Message)" -Level ERROR
+            exit 1
+        }
+    } else {
+        Write-Log "Secure password file not found: $securePasswordPath" -Level ERROR
+        Write-Log "Run config\Setup-SecurePassword.ps1 to create the encrypted password file" -Level ERROR
+        exit 1
+    }
+} elseif ($config.Credentials.Password) {
+    # Fallback to plain text password (deprecated)
+    $password = $config.Credentials.Password
+    Write-Log "WARNING: Using plain text password from config (deprecated)" -Level WARNING
+} else {
+    Write-Log "No password configured" -Level ERROR
     exit 1
 }
 
@@ -511,7 +539,7 @@ if ($effectiveSqlConnectionString) {
 # Get authentication token
 Write-Log "Retrieving authentication token..." -Level INFO
 try {
-    $token = Get-AuthTokenFromWpms -Username $config.Credentials.Username -Password $config.Credentials.Password
+    $token = Get-AuthTokenFromWpms -Username $config.Credentials.Username -Password $password
     
     if (-not $token) {
         Write-Log "Failed to retrieve authentication token" -Level ERROR

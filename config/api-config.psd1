@@ -8,7 +8,9 @@
     # Credentials
     Credentials = @{
         Username = "pduarte"
-        Password = "Kik02006!"
+        # Password is stored encrypted in secure-password.txt
+        # Run config\Setup-SecurePassword.ps1 to create/update the encrypted password file
+        SecurePasswordFile = "secure-password.txt"
     }
 
     # SQL Server Configuration
