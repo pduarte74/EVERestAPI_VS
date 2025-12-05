@@ -54,7 +54,9 @@ function Invoke-RestApiRequest {
         [string]$BearerToken,
         [int]$TimeoutSec = 60,
         [int]$RetryCount = 2,
-        [int]$RetryDelaySeconds = 2
+        [int]$RetryDelaySeconds = 2,
+        [switch]$ShowCurl,
+        [string]$CurlFilePath
     )
 
     begin {
@@ -93,6 +95,39 @@ function Invoke-RestApiRequest {
         while ($true) {
             try {
                 $attempt++
+
+                # Build equivalent curl command (optional)
+                if ($ShowCurl -and $attempt -eq 1) {
+                  $curlParts = @()
+                  $curlParts += 'curl'
+                  $curlParts += ("-X {0}" -f $Method)
+
+                  # Headers
+                  foreach ($h in $Headers.GetEnumerator()) {
+                    $hn = $h.Key
+                    $hv = $h.Value -as [string]
+                    if ($hv -ne $null -and $hv -ne '') {
+                      $safeHv = $hv.Replace('"', '\\"')
+                      $curlParts += "-H `"$($hn): $safeHv`""
+                    }
+                  }
+
+                  # Body
+                  if ($bodyToSend) {
+                    $safeBody = $bodyToSend.Replace("'", "\\'")
+                    $curlParts += "--data-raw '$safeBody'"
+                  }
+
+                    # URL (already contains query string if present)
+                    $curlParts += "`"$Uri`""
+
+                  $curlCmd = $curlParts -join ' '
+
+                  Write-Host "[CURL] $curlCmd" -ForegroundColor DarkYellow
+                  if ($CurlFilePath) {
+                    try { Add-Content -Path $CurlFilePath -Value $curlCmd } catch { }
+                  }
+                }
 
                 # Choose Invoke-WebRequest to capture raw content and status code
                 $invokeParams = @{ Uri = $Uri; Method = $Method; Headers = $Headers; TimeoutSec = $TimeoutSec; ErrorAction = 'Stop' }
