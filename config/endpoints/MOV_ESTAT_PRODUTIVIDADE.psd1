@@ -6,7 +6,8 @@
     Method = "GET"
     Parameters = @{
         ENTI = @{ val1 = "('92','93')"; sig1 = "IN" }
-        DTVL = @{ val1 = "20251201"; sig1 = "GE" }
+        # Date parameter: Monday of previous week (calculated dynamically by integration script)
+        DTVL = @{ val1 = "DYNAMIC:PreviousMondayDate"; sig1 = "GE" }
     }
     TargetTable = "dbo.MOV_ESTAT_PRODUTIVIDADE"
     Description = "Retrieve productivity statistics and errors by operator"

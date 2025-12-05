@@ -373,6 +373,36 @@ if ($config.EndpointConfigFiles -and $config.EndpointConfigFiles.Count -gt 0) {
         if (Test-Path $endpointPath) {
             try {
                 $endpoint = Import-PowerShellDataFile -Path $endpointPath
+                
+                # Process dynamic parameter values
+                if ($endpoint.Parameters) {
+                    $paramKeys = @($endpoint.Parameters.Keys)
+                    foreach ($paramKey in $paramKeys) {
+                        $paramValue = $endpoint.Parameters[$paramKey]
+                        if ($paramValue -is [hashtable]) {
+                            $valueKeys = @($paramValue.Keys)
+                            foreach ($valueKey in $valueKeys) {
+                                $value = $paramValue[$valueKey]
+                                if ($value -is [string] -and $value.StartsWith("DYNAMIC:")) {
+                                    $dynamicType = $value.Substring(8)
+                                    switch ($dynamicType) {
+                                        "PreviousMondayDate" {
+                                            # Calculate Monday of previous week
+                                            $today = Get-Date
+                                            $dayOfWeek = [int]$today.DayOfWeek
+                                            # Get Monday of current week (0=Sunday, so Monday=1)
+                                            $currentMonday = $today.AddDays(-($dayOfWeek - 1))
+                                            # Subtract 7 days to get previous Monday
+                                            $previousMonday = $currentMonday.AddDays(-7)
+                                            $paramValue[$valueKey] = $previousMonday.ToString("yyyyMMdd")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
                 $endpoints += $endpoint
                 Write-Log "  Loaded endpoint config: $endpointFile" -Level INFO
             } catch {
