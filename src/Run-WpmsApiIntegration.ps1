@@ -47,16 +47,28 @@ function Write-Log {
 Write-Host "=== WPMS API Production Runner ===" -ForegroundColor Cyan
 Write-Host ""
 
-# Prepare log file
+# Prepare log file in dedicated folder (defaults to ..\logs)
 if (-not $LogFile) {
     $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
-    $LogFile = "$PSScriptRoot\wpms-api-$timestamp.log"
+    $LogFile = [System.IO.Path]::Combine($PSScriptRoot, '..', 'logs', "wpms-api-$timestamp.log")
+}
+
+# Ensure log directory exists
+try {
+    $logDir = Split-Path -Parent $LogFile
+    if (-not [string]::IsNullOrWhiteSpace($logDir) -and -not (Test-Path $logDir)) {
+        New-Item -Path $logDir -ItemType Directory -Force | Out-Null
+    }
+} catch {
+    Write-Host "[ERROR] Failed to ensure log directory: $($_.Exception.Message)" -ForegroundColor Red
+    exit 1
 }
 
 # Create log file
 try {
-    New-Item -Path $LogFile -ItemType File -Force | Out-Null
-    Write-Host "Log file: $LogFile" -ForegroundColor Gray
+    $script:LogFile = [System.IO.Path]::GetFullPath($LogFile)
+    New-Item -Path $script:LogFile -ItemType File -Force | Out-Null
+    Write-Host "Log file: $script:LogFile" -ForegroundColor Gray
     Write-Host ""
 } catch {
     Write-Host "[ERROR] Failed to create log file: $($_.Exception.Message)" -ForegroundColor Red
