@@ -72,7 +72,11 @@ function Invoke-RestApiRequest {
                 $qpairs += ("{0}={1}" -f [System.Uri]::EscapeDataString($k), [System.Uri]::EscapeDataString($v))
             }
             $qs = ($qpairs -join '&')
-            if ($Uri -match '\?') { $Uri = "$Uri&$qs" } else { $Uri = "$Uri?$qs" }
+            if ($Uri -match '\?') {
+                $Uri = $Uri + '&' + $qs
+            } else {
+                $Uri = $Uri + '?' + $qs
+            }
         }
 
         # Prepare body and content-type
@@ -118,8 +122,8 @@ function Invoke-RestApiRequest {
                     $curlParts += "--data-raw '$safeBody'"
                   }
 
-                    # URL (already contains query string if present)
-                    $curlParts += "`"$Uri`""
+                  # URL (already contains query string if present)
+                  $curlParts += "`"$Uri`""
 
                   $curlCmd = $curlParts -join ' '
 
