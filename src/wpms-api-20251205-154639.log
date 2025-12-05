@@ -1,0 +1,32 @@
+[2025-12-05 15:46:39] [INFO] ========================================
+[2025-12-05 15:46:39] [INFO] WPMS API Production Run Started
+[2025-12-05 15:46:39] [INFO] ========================================
+[2025-12-05 15:46:39] [INFO] Loading configuration from: C:\Tmp\EVERestAPI_VS\src\..\config\api-config.psd1
+[2025-12-05 15:46:39] [SUCCESS] Configuration loaded successfully
+[2025-12-05 15:46:39] [INFO]   Server: http://wpms.prodout.com
+[2025-12-05 15:46:39] [INFO]   Username: pduarte
+[2025-12-05 15:46:39] [INFO]   Endpoints: 2
+[2025-12-05 15:46:39] [INFO] Retrieving authentication token...
+[2025-12-05 15:46:39] [SUCCESS] Authentication token obtained successfully
+[2025-12-05 15:46:39] [INFO] Starting API calls for 2 endpoint(s)...
+[2025-12-05 15:46:39] [INFO] ----------------------------------------
+[2025-12-05 15:46:39] [INFO] Endpoint 1 of 2 - D0080Dread_all - With ARTC parameter
+[2025-12-05 15:46:39] [INFO]   URI: /Eve/api/WebService/D0080Dread_all
+[2025-12-05 15:46:39] [INFO]   Parameter: ARTC = {"val1":"1303394"}
+[2025-12-05 15:46:39] [INFO]   Full URI: http://wpms.prodout.com/Eve/api/WebService/D0080Dread_all
+[2025-12-05 15:46:40] [SUCCESS]   Status: SUCCESS (HTTP 200)
+[2025-12-05 15:46:40] [INFO]   Items returned: 7
+[2025-12-05 15:46:40] [INFO] ----------------------------------------
+[2025-12-05 15:46:40] [INFO] Endpoint 2 of 2 - D0081read_all - Simple ARTC
+[2025-12-05 15:46:40] [INFO]   URI: /Eve/api/WebService/D0081read_all
+[2025-12-05 15:46:40] [INFO]   Parameter: ARTC = {"val1":"1303394"}
+[2025-12-05 15:46:40] [INFO]   Full URI: http://wpms.prodout.com/Eve/api/WebService/D0081read_all
+[2025-12-05 15:46:40] [SUCCESS]   Status: SUCCESS (HTTP 200)
+[2025-12-05 15:46:40] [INFO]   Items returned: 8
+[2025-12-05 15:46:40] [INFO] ========================================
+[2025-12-05 15:46:40] [INFO] WPMS API Production Run Completed
+[2025-12-05 15:46:40] [INFO] ========================================
+[2025-12-05 15:46:40] [INFO] Total endpoints: 2
+[2025-12-05 15:46:40] [SUCCESS] Successful: 2
+[2025-12-05 15:46:40] [SUCCESS] Failed: 0
+[2025-12-05 15:46:40] [INFO] Log file: C:\Tmp\EVERestAPI_VS\src\wpms-api-20251205-154639.log

@@ -4,14 +4,19 @@
     Automated WPMS API test from configuration file
 .DESCRIPTION
     Reads configuration file with credentials, endpoints and parameters,
-    then calls each configured API endpoint sequentially.
+    then calls each configured API endpoint sequentially and writes results to CSV.
 .PARAMETER ConfigFile
     Path to the configuration file (default: ..\config\api-config.psd1)
+.PARAMETER OutputFile
+    Path to the output CSV file (default: test-results-TIMESTAMP.csv)
 #>
 
 param(
     [Parameter(Mandatory=$false)]
-    [string]$ConfigFile = "$PSScriptRoot\..\config\api-config.psd1"
+    [string]$ConfigFile = "C:\Tmp\EVERestAPI_VS\config\api-config.psd1",
+    
+    [Parameter(Mandatory=$false)]
+    [string]$OutputFile
 )
 
 # Import modules
@@ -64,6 +69,18 @@ if (-not $token) {
 Write-Host "[OK] Token obtained" -ForegroundColor Green
 Write-Host ""
 
+# Prepare output file
+if (-not $OutputFile) {
+    $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+    $OutputFile = "$PSScriptRoot\test-results-$timestamp.csv"
+}
+
+Write-Host "Results will be written to: $OutputFile" -ForegroundColor Gray
+Write-Host ""
+
+# Array to store results
+$results = @()
+
 # Call each endpoint
 $totalEndpoints = $config.Endpoints.Count
 $successCount = 0
@@ -112,6 +129,24 @@ for ($i = 0; $i -lt $totalEndpoints; $i++) {
     
     Write-Host ""
     
+    # Prepare result object
+    $resultObj = [PSCustomObject]@{
+        Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+        EndpointNumber = $endpointNum
+        Name = $endpoint.Name
+        Uri = $endpoint.Uri
+        FullUri = $fullUri
+        Parameters = if ($endpoint.Parameters -and $endpoint.Parameters.Count -gt 0) {
+            ($endpoint.Parameters.Keys | ForEach-Object { "$_=$($endpoint.Parameters[$_])" }) -join "; "
+        } else {
+            "(none)"
+        }
+        Success = $response.Success
+        StatusCode = $response.StatusCode
+        ItemCount = 0
+        ErrorMessage = $response.Error
+    }
+    
     if ($response.Success) {
         Write-Host "[OK] Request successful" -ForegroundColor Green
         Write-Host "Status Code: $($response.StatusCode)" -ForegroundColor Cyan
@@ -124,6 +159,7 @@ for ($i = 0; $i -lt $totalEndpoints; $i++) {
             } else {
                 $itemCount = 1
             }
+            $resultObj.ItemCount = $itemCount
             Write-Host "Response: $itemCount item(s) returned" -ForegroundColor Gray
         } else {
             Write-Host "Response: Empty or non-JSON" -ForegroundColor Gray
@@ -135,6 +171,9 @@ for ($i = 0; $i -lt $totalEndpoints; $i++) {
         $failureCount++
     }
     
+    # Add to results array
+    $results += $resultObj
+    
     Write-Host ""
 }
 
@@ -145,6 +184,15 @@ Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "Total endpoints: $totalEndpoints" -ForegroundColor Gray
 Write-Host "Successful: $successCount" -ForegroundColor Green
 Write-Host "Failed: $failureCount" -ForegroundColor Red
+Write-Host ""
+
+# Write results to CSV
+try {
+    $results | Export-Csv -Path $OutputFile -NoTypeInformation -Encoding UTF8
+    Write-Host "[OK] Results written to: $OutputFile" -ForegroundColor Green
+} catch {
+    Write-Host "[ERROR] Failed to write CSV: $($_.Exception.Message)" -ForegroundColor Red
+}
 Write-Host ""
 
 if ($failureCount -eq 0) {
