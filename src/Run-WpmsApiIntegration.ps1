@@ -35,7 +35,8 @@ function Ensure-SqlTable {
         [System.Data.SqlClient.SqlConnection]$Connection,
         [string]$SchemaName,
         [string]$TableName,
-        [switch]$IsLogTable
+        [switch]$IsLogTable,
+        [hashtable]$TableSchema
     )
 
     $safeSchema = $SchemaName.Replace("'", "''")
@@ -62,8 +63,30 @@ BEGIN
     );
 END
 "@
-    } else {
-        # Data table for TM_USERS - stores actual columns from JSON
+    } elseif ($TableSchema -and $TableSchema.Columns) {
+        # Build dynamic table from schema definition
+        $columnDefs = @()
+        $pkColumns = @()
+        
+        foreach ($col in $TableSchema.Columns) {
+            $colName = $col.Name
+            $colType = $col.Type
+            $nullable = if ($col.PrimaryKey -or $col.Default) { "NOT NULL" } else { "NULL" }
+            $default = if ($col.Default) { " DEFAULT $($col.Default)" } else { "" }
+            
+            $columnDefs += "        [$colName] $colType $nullable$default"
+            
+            if ($col.PrimaryKey) {
+                $pkColumns += "[$colName]"
+            }
+        }
+        
+        if ($pkColumns.Count -gt 0) {
+            $columnDefs += "        PRIMARY KEY ($($pkColumns -join ', '))"
+        }
+        
+        $columnsStr = $columnDefs -join ",`n"
+        
         $ddl = @"
 IF NOT EXISTS (
     SELECT 1 FROM sys.tables t
@@ -72,25 +95,12 @@ IF NOT EXISTS (
 )
 BEGIN
     CREATE TABLE [$safeSchema].[$safeTable] (
-        [Utente] NVARCHAR(50) PRIMARY KEY,
-        [Utente_nome] NVARCHAR(200) NULL,
-        [Utente_adm] NVARCHAR(10) NULL,
-        [Utente_gruppo] NVARCHAR(50) NULL,
-        [Lingua_codice] NVARCHAR(10) NULL,
-        [Menu_rf] NVARCHAR(50) NULL,
-        [Menu_codice] NVARCHAR(50) NULL,
-        [Password_no_rule] NVARCHAR(10) NULL,
-        [Trace_accesso] NVARCHAR(10) NULL,
-        [Codice_validazione] NVARCHAR(200) NULL,
-        [Installazione] NVARCHAR(200) NULL,
-        [Preferenze] NVARCHAR(MAX) NULL,
-        [Style_sheet] NVARCHAR(200) NULL,
-        [Std_datamod] NVARCHAR(50) NULL,
-        [Std_utente] NVARCHAR(50) NULL,
-        [RetrievedAt] DATETIME2(3) NOT NULL DEFAULT GETDATE()
+$columnsStr
     );
 END
 "@
+    } else {
+        throw "Table schema not provided for data table"
     }
 
     $cmd = $Connection.CreateCommand()
@@ -132,6 +142,83 @@ function Write-SqlResult {
     $cmd.Parameters['@Payload'].Value = if ($null -eq $Payload) { [DBNull]::Value } else { $Payload }
 
     $cmd.ExecuteNonQuery() | Out-Null
+}
+
+function Write-EndpointData {
+    param(
+        [System.Data.SqlClient.SqlConnection]$Connection,
+        [string]$SchemaName,
+        [string]$TableName,
+        [object[]]$DataRows,
+        [datetime]$RetrievedAt,
+        [hashtable]$FieldMappings,
+        [hashtable]$TableSchema
+    )
+
+    if (-not $FieldMappings -or -not $TableSchema) {
+        throw "FieldMappings and TableSchema are required"
+    }
+
+    # Get primary key columns
+    $pkColumns = @()
+    foreach ($col in $TableSchema.Columns) {
+        if ($col.PrimaryKey) {
+            $pkColumns += $col.Name
+        }
+    }
+
+    if ($pkColumns.Count -eq 0) {
+        throw "No primary key defined in table schema"
+    }
+
+    # Build field lists
+    $allFields = $FieldMappings.Keys | Where-Object { $_ -ne 'RetrievedAt' }
+    $updateSetClauses = @()
+    $insertColumns = @()
+    $insertValues = @()
+
+    foreach ($field in $allFields) {
+        $colName = $FieldMappings[$field]
+        if ($pkColumns -notcontains $colName) {
+            $updateSetClauses += "$colName = @$field"
+        }
+        $insertColumns += $colName
+        $insertValues += "@$field"
+    }
+
+    # Add RetrievedAt
+    $insertColumns += "RetrievedAt"
+    $insertValues += "@RetrievedAt"
+    $updateSetClauses += "RetrievedAt = @RetrievedAt"
+
+    # Build MERGE statement
+    $pkCondition = ($pkColumns | ForEach-Object { "target.$_ = source.$_" }) -join " AND "
+    $sourceSelect = ($pkColumns | ForEach-Object { "@$_ AS $_" }) -join ", "
+
+    $mergeQuery = @"
+MERGE INTO [$SchemaName].[$TableName] AS target
+USING (SELECT $sourceSelect) AS source
+ON $pkCondition
+WHEN MATCHED THEN
+    UPDATE SET $($updateSetClauses -join ', ')
+WHEN NOT MATCHED THEN
+    INSERT ($($insertColumns -join ', '))
+    VALUES ($($insertValues -join ', '));
+"@
+
+    foreach ($row in $DataRows) {
+        $cmd = $Connection.CreateCommand()
+        $cmd.CommandText = $mergeQuery
+
+        foreach ($field in $allFields) {
+            $value = if ($row.PSObject.Properties[$field]) { $row.$field } else { $null }
+            $null = $cmd.Parameters.AddWithValue("@$field", $(if ($null -eq $value) { [DBNull]::Value } else { $value }))
+        }
+
+        $null = $cmd.Parameters.AddWithValue('@RetrievedAt', $RetrievedAt)
+
+        $cmd.ExecuteNonQuery() | Out-Null
+    }
 }
 
 function Write-TmUsersData {
@@ -277,10 +364,36 @@ if (-not $config.Credentials -or -not $config.Credentials.Username -or -not $con
     exit 1
 }
 
-if (-not $config.Endpoints -or $config.Endpoints.Count -eq 0) {
+# Load endpoints from separate config files if specified
+$endpoints = @()
+if ($config.EndpointConfigFiles -and $config.EndpointConfigFiles.Count -gt 0) {
+    $configDir = Split-Path -Parent $ConfigFile
+    foreach ($endpointFile in $config.EndpointConfigFiles) {
+        $endpointPath = Join-Path $configDir $endpointFile
+        if (Test-Path $endpointPath) {
+            try {
+                $endpoint = Import-PowerShellDataFile -Path $endpointPath
+                $endpoints += $endpoint
+                Write-Log "  Loaded endpoint config: $endpointFile" -Level INFO
+            } catch {
+                Write-Log "  Failed to load endpoint config $endpointFile : $($_.Exception.Message)" -Level WARNING
+            }
+        } else {
+            Write-Log "  Endpoint config not found: $endpointFile" -Level WARNING
+        }
+    }
+} elseif ($config.Endpoints) {
+    # Fallback to inline endpoints
+    $endpoints = $config.Endpoints
+}
+
+if (-not $endpoints -or $endpoints.Count -eq 0) {
     Write-Log "No endpoints configured" -Level ERROR
     exit 1
 }
+
+# Update config with loaded endpoints for downstream processing
+$config.Endpoints = $endpoints
 
 Write-Log "Configuration loaded successfully" -Level SUCCESS
 Write-Log "  Server: $($config.Server)" -Level INFO
@@ -314,7 +427,7 @@ if ($effectiveSqlConnectionString) {
                 $epSchema = if ($epParts.Count -eq 2) { $epParts[0] } else { 'dbo' }
                 $epTable = if ($epParts.Count -eq 2) { $epParts[1] } else { $ep.TargetTable }
                 if (-not $createdTables[$ep.TargetTable]) {
-                    Ensure-SqlTable -Connection $sqlConnection -SchemaName $epSchema -TableName $epTable
+                    Ensure-SqlTable -Connection $sqlConnection -SchemaName $epSchema -TableName $epTable -TableSchema $ep.TableSchema
                     $createdTables[$ep.TargetTable] = $true
                 }
             }
@@ -401,6 +514,14 @@ for ($i = 0; $i -lt $totalEndpoints; $i++) {
             if ($response.Content) {
                 if ($response.Content -is [array]) {
                     $itemCount = $response.Content.Count
+                } elseif ($response.Content -is [PSCustomObject]) {
+                    # Check if response has numbered keys ("1", "2", "3"...)
+                    $numericProps = $response.Content.PSObject.Properties | Where-Object { $_.Name -match '^\d+$' }
+                    if ($numericProps -and $numericProps.Count -gt 0) {
+                        $itemCount = $numericProps.Count
+                    } else {
+                        $itemCount = 1
+                    }
                 } else {
                     $itemCount = 1
                 }
@@ -459,14 +580,46 @@ for ($i = 0; $i -lt $totalEndpoints; $i++) {
                 $targetSchema = if ($targetParts.Count -eq 2) { $targetParts[0] } else { 'dbo' }
                 $targetTableName = if ($targetParts.Count -eq 2) { $targetParts[1] } else { $endpoint.TargetTable }
 
-                $dataRows = if ($response.Content -is [array]) { $response.Content } else { @($response.Content) }
+                # Handle different response formats:
+                # 1. Array of objects: [{"field":"value"}, {"field":"value"}]
+                # 2. Single object: {"field":"value"}
+                # 3. Object with numbered keys: {"1":{"field":"value"}, "2":{"field":"value"}}
+                $dataRows = @()
+                if ($response.Content -is [array]) {
+                    $dataRows = $response.Content
+                } elseif ($response.Content -is [PSCustomObject]) {
+                    # Check if all properties are numeric keys (format #3)
+                    $props = $response.Content.PSObject.Properties | Where-Object { $_.Name -match '^\d+$' }
+                    if ($props -and $props.Count -gt 0) {
+                        # Extract values from numbered keys
+                        $dataRows = @($props | ForEach-Object { $_.Value })
+                    } else {
+                        # Single object (format #2)
+                        $dataRows = @($response.Content)
+                    }
+                } else {
+                    $dataRows = @($response.Content)
+                }
                 
-                Write-TmUsersData `
-                    -Connection $sqlConnection `
-                    -SchemaName $targetSchema `
-                    -TableName $targetTableName `
-                    -DataRows $dataRows `
-                    -RetrievedAt $retrievedAt
+                if ($endpoint.FieldMappings -and $endpoint.TableSchema) {
+                    # Use dynamic endpoint data writer
+                    Write-EndpointData `
+                        -Connection $sqlConnection `
+                        -SchemaName $targetSchema `
+                        -TableName $targetTableName `
+                        -DataRows $dataRows `
+                        -RetrievedAt $retrievedAt `
+                        -FieldMappings $endpoint.FieldMappings `
+                        -TableSchema $endpoint.TableSchema
+                } else {
+                    # Fallback to legacy TM_USERS writer
+                    Write-TmUsersData `
+                        -Connection $sqlConnection `
+                        -SchemaName $targetSchema `
+                        -TableName $targetTableName `
+                        -DataRows $dataRows `
+                        -RetrievedAt $retrievedAt
+                }
 
                 Write-Log "  SQL data write: OK -> [$targetSchema].[$targetTableName] ($($dataRows.Count) rows)" -Level SUCCESS
             }

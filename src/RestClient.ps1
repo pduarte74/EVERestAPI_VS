@@ -68,7 +68,12 @@ function Invoke-RestApiRequest {
         if ($QueryParameters) {
             $qpairs = @()
             foreach ($k in $QueryParameters.Keys) {
-                $v = [string]$QueryParameters[$k]
+                $v = $QueryParameters[$k]
+                # If value is a hashtable/object, convert to JSON
+                if ($v -is [hashtable] -or $v -is [pscustomobject]) {
+                    $v = $v | ConvertTo-Json -Compress
+                }
+                $v = [string]$v
                 $qpairs += ("{0}={1}" -f [System.Uri]::EscapeDataString($k), [System.Uri]::EscapeDataString($v))
             }
             $qs = ($qpairs -join '&')
