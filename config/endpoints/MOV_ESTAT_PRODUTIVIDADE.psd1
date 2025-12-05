@@ -22,24 +22,24 @@
             @{ Name = "Dprt"; Type = "NVARCHAR(50)" }
             @{ Name = "Shift"; Type = "NVARCHAR(4)" }
             @{ Name = "Team"; Type = "NVARCHAR(4)" }
-            @{ Name = "QttPicked"; Type = "NVARCHAR(50)" }
-            @{ Name = "QttPicked2"; Type = "NVARCHAR(50)" }
-            @{ Name = "QttChecked"; Type = "NVARCHAR(50)" }
-            @{ Name = "QttChecked2"; Type = "NVARCHAR(50)" }
-            @{ Name = "QttCounted"; Type = "NVARCHAR(50)" }
-            @{ Name = "QttCounted2"; Type = "NVARCHAR(50)" }
-            @{ Name = "TimeSpent"; Type = "NVARCHAR(50)" }
+            @{ Name = "QttPicked"; Type = "DECIMAL(18,3)" }
+            @{ Name = "QttPicked2"; Type = "DECIMAL(18,3)" }
+            @{ Name = "QttChecked"; Type = "DECIMAL(18,3)" }
+            @{ Name = "QttChecked2"; Type = "DECIMAL(18,3)" }
+            @{ Name = "QttCounted"; Type = "DECIMAL(18,3)" }
+            @{ Name = "QttCounted2"; Type = "DECIMAL(18,3)" }
+            @{ Name = "TimeSpent"; Type = "INT" }
             @{ Name = "TimeUm"; Type = "NVARCHAR(4)" }
-            @{ Name = "NrSusp"; Type = "NVARCHAR(50)" }
-            @{ Name = "NrActions"; Type = "NVARCHAR(50)" }
-            @{ Name = "NrContainers"; Type = "NVARCHAR(50)" }
-            @{ Name = "HorizDistance"; Type = "NVARCHAR(50)" }
-            @{ Name = "VertDistance"; Type = "NVARCHAR(50)" }
-            @{ Name = "Numero_linee"; Type = "NVARCHAR(50)" }
+            @{ Name = "NrSusp"; Type = "INT" }
+            @{ Name = "NrActions"; Type = "INT" }
+            @{ Name = "NrContainers"; Type = "INT" }
+            @{ Name = "HorizDistance"; Type = "DECIMAL(18,3)" }
+            @{ Name = "VertDistance"; Type = "DECIMAL(18,3)" }
+            @{ Name = "Numero_linee"; Type = "INT" }
             @{ Name = "DistUM"; Type = "NVARCHAR(10)" }
-            @{ Name = "DifQtt"; Type = "NVARCHAR(50)" }
-            @{ Name = "DiffQtt2"; Type = "NVARCHAR(50)" }
-            @{ Name = "NrErrors"; Type = "NVARCHAR(50)" }
+            @{ Name = "DifQtt"; Type = "DECIMAL(18,3)" }
+            @{ Name = "DiffQtt2"; Type = "DECIMAL(18,3)" }
+            @{ Name = "NrErrors"; Type = "INT" }
             @{ Name = "RetrievedAt"; Type = "DATETIME2(3)"; Default = "GETDATE()" }
         )
     }

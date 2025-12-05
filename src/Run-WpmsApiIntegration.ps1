@@ -216,13 +216,33 @@ WHEN NOT MATCHED THEN
             # Apply data type conversions based on TableSchema
             if ($null -ne $value -and $value -ne '') {
                 $colDef = $TableSchema.Columns | Where-Object { $_.Name -eq $FieldMappings[$field] } | Select-Object -First 1
-                if ($colDef -and $colDef.Type -eq 'DATE') {
-                    # Convert from yyyyMMdd string to DATE
-                    if ($value -match '^\d{8}$') {
-                        try {
-                            $value = [datetime]::ParseExact($value, 'yyyyMMdd', $null)
-                        } catch {
-                            $value = [DBNull]::Value
+                if ($colDef) {
+                    switch -Regex ($colDef.Type) {
+                        '^DATE$' {
+                            # Convert from yyyyMMdd string to DATE
+                            if ($value -match '^\d{8}$') {
+                                try {
+                                    $value = [datetime]::ParseExact($value, 'yyyyMMdd', $null)
+                                } catch {
+                                    $value = [DBNull]::Value
+                                }
+                            }
+                        }
+                        '^(INT|BIGINT|SMALLINT|TINYINT)$' {
+                            # Convert to integer
+                            try {
+                                $value = [int]$value
+                            } catch {
+                                $value = [DBNull]::Value
+                            }
+                        }
+                        '^(DECIMAL|NUMERIC|FLOAT|REAL)' {
+                            # Convert to decimal/float
+                            try {
+                                $value = [decimal]$value
+                            } catch {
+                                $value = [DBNull]::Value
+                            }
                         }
                     }
                 }
