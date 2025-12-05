@@ -14,18 +14,16 @@
 
 .EXAMPLE
   PS> .\tests\run-sample.ps1
-  (Prompts for credentials, gets token, calls API, displays results)
+  (Prompts for username and password, auto-generates nonce, calls API, displays results)
 
 .EXAMPLE
-  PS> $creds = @{ Username='pduarte'; Password='Kik02006!'; Nonce='ABC' }
-      .\tests\run-sample.ps1 @creds
-  (Uses provided credentials without prompts)
+  PS> .\tests\run-sample.ps1 -Username 'pduarte' -Password 'Kik02006!'
+  (Uses provided credentials, auto-generates nonce, no prompts)
 #>
 
 param(
     [string]$Username,
     [string]$Password,
-    [string]$Nonce = 'ABC',
     [string]$ApiEndpoint = 'http://wpms/Eve/api/WebService/D0080Dread_all',
     [hashtable]$QueryParams = @{ ARTC = '{"val1":"1303394"}' },
     [string]$OutputFile  # Optional CSV file to save results
@@ -36,6 +34,18 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 . "$scriptRoot\..\src\Get-AuthToken.ps1"
 . "$scriptRoot\..\src\RestClient.ps1"
+
+# Prompt for credentials if not supplied
+if (-not $Username) {
+    $Username = Read-Host -Prompt "Username"
+}
+if (-not $Password) {
+    $securePass = Read-Host -Prompt "Password" -AsSecureString
+    $Password = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePass))
+}
+
+# Generate a random nonce for this session
+$Nonce = New-Nonce -Length 16
 
 Write-Host "=== EVERestAPI Sample Run ===" -ForegroundColor Cyan
 
