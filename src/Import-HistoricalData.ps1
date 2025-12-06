@@ -252,7 +252,7 @@ while ($currentDate -le $endDateTime) {
         } else {
             Write-Host "  Retrieved $itemCount records" -ForegroundColor Green
             
-            # Insert data
+            # Upsert data (MERGE to avoid PK conflicts)
             if (-not $DryRun) {
                 try {
                     $insertedCount = 0
@@ -284,21 +284,32 @@ while ($currentDate -le $endDateTime) {
                             'DiffQtt2' = 'DiffQtt2'
                             'NrErrors' = 'NrErrors'
                         }
-                        
-                        # Build parameter list
+
+                        $pkColumns = @('Date','Whrs','Oprt','WrkType')
+                        $allFields = @('Date') + $fieldMappings.Keys
+
+                        $insertColumns = $allFields + 'RetrievedAt'
+                        $insertValues = $insertColumns.ForEach({ '@' + $_ })
+                        $updateSet = ($allFields | Where-Object { $_ -notin $pkColumns } | ForEach-Object { "[{0}] = @{0}" -f $_ }) -join ', '
+                        $sourceSelect = ($allFields | ForEach-Object { "@{0} AS [{0}]" -f $_ }) -join ', '
+                        $pkCondition = ($pkColumns | ForEach-Object { "target.[{0}] = source.[{0}]" -f $_ }) -join ' AND '
+
                         $cmd = $sqlConnection.CreateCommand()
-                        $paramList = "[Date], [Whrs], [Oprt], [WrkType], [Dprt], [Shift], [Team], [QttPicked], [QttPicked2], [QttChecked], [QttChecked2], [QttCounted], [QttCounted2], [TimeSpent], [TimeUm], [NrSusp], [NrActions], [NrContainers], [HorizDistance], [VertDistance], [Numero_linee], [DistUM], [DifQtt], [DiffQtt2], [NrErrors], [RetrievedAt]"
-                        
-                        $valueList = "@Date, @Whrs, @Oprt, @WrkType, @Dprt, @Shift, @Team, @QttPicked, @QttPicked2, @QttChecked, @QttChecked2, @QttCounted, @QttCounted2, @TimeSpent, @TimeUm, @NrSusp, @NrActions, @NrContainers, @HorizDistance, @VertDistance, @Numero_linee, @DistUM, @DifQtt, @DiffQtt2, @NrErrors, @RetrievedAt"
-                        
-                        $cmd.CommandText = "INSERT INTO [dbo].[MOV_ESTAT_PRODUTIVIDADE] ($paramList) VALUES ($valueList)"
-                        
+                        $cmd.CommandText = "MERGE INTO [dbo].[MOV_ESTAT_PRODUTIVIDADE] AS target
+USING (SELECT $sourceSelect) AS source
+ON $pkCondition
+WHEN MATCHED THEN
+    UPDATE SET $updateSet, RetrievedAt = @RetrievedAt
+WHEN NOT MATCHED THEN
+    INSERT ($($insertColumns -join ', '))
+    VALUES ($($insertValues -join ', '));"
+
                         # Set parameters
                         $cmd.Parameters.AddWithValue("@Date", [datetime]::ParseExact($dateStr, 'yyyyMMdd', $null)) | Out-Null
-                        
+
                         foreach ($field in $fieldMappings.Keys) {
                             $value = if ($row.PSObject.Properties[$field]) { $row.$field } else { $null }
-                            
+
                             # Apply data type conversions
                             if ($null -ne $value -and $value -ne '') {
                                 $colDef = $endpoint.TableSchema.Columns | Where-Object { $_.Name -eq $fieldMappings[$field] } | Select-Object -First 1
@@ -321,17 +332,17 @@ while ($currentDate -le $endDateTime) {
                                     }
                                 }
                             }
-                            
+
                             $cmd.Parameters.AddWithValue("@$field", $(if ($null -eq $value -or $value -eq '') { [DBNull]::Value } else { $value })) | Out-Null
                         }
-                        
+
                         $cmd.Parameters.AddWithValue("@RetrievedAt", (Get-Date)) | Out-Null
                         $cmd.ExecuteNonQuery() | Out-Null
                         $insertedCount++
                     }
-                    
+
                     $totalRecords += $insertedCount
-                    Write-Host "  OK Inserted $insertedCount records" -ForegroundColor Green
+                    Write-Host "  OK Inserted/updated $insertedCount records" -ForegroundColor Green
                 } catch {
                     Write-Host "  ERROR Error inserting data: $($_.Exception.Message)" -ForegroundColor Red
                     $totalErrors++
