@@ -106,7 +106,8 @@ try {
         (Join-Path $TargetPath "src"),
         (Join-Path $TargetPath "config"),
         (Join-Path $TargetPath "config\endpoints"),
-        (Join-Path $TargetPath "logs")
+        (Join-Path $TargetPath "logs"),
+        (Join-Path $TargetPath "tests")
     )
     
     foreach ($dir in $dirsToCreate) {
@@ -129,6 +130,12 @@ try {
     Copy-Item -Path (Join-Path $sourcePath "src\*.ps1") -Destination (Join-Path $TargetPath "src") -Force
     Write-Host "  Copied: src\*.ps1" -ForegroundColor Gray
     
+    # Copy test files
+    if (Test-Path (Join-Path $sourcePath "tests\*.ps1")) {
+        Copy-Item -Path (Join-Path $sourcePath "tests\*.ps1") -Destination (Join-Path $TargetPath "tests") -Force
+        Write-Host "  Copied: tests\*.ps1" -ForegroundColor Gray
+    }
+    
     # Copy config files (excluding secure-password.txt)
     Copy-Item -Path (Join-Path $sourcePath "config\*.psd1") -Destination (Join-Path $TargetPath "config") -Force
     Copy-Item -Path (Join-Path $sourcePath "config\*.ps1") -Destination (Join-Path $TargetPath "config") -Force
@@ -143,6 +150,30 @@ try {
     if (Test-Path (Join-Path $sourcePath "README.md")) {
         Copy-Item -Path (Join-Path $sourcePath "README.md") -Destination $TargetPath -Force
         Write-Host "  Copied: README.md" -ForegroundColor Gray
+    }
+    
+    # Copy solution documentation
+    if (Test-Path (Join-Path $sourcePath "SOLUTION-PT.md")) {
+        Copy-Item -Path (Join-Path $sourcePath "SOLUTION-PT.md") -Destination $TargetPath -Force
+        Write-Host "  Copied: SOLUTION-PT.md" -ForegroundColor Gray
+    }
+    if (Test-Path (Join-Path $sourcePath "SOLUTION-EN.md")) {
+        Copy-Item -Path (Join-Path $sourcePath "SOLUTION-EN.md") -Destination $TargetPath -Force
+        Write-Host "  Copied: SOLUTION-EN.md" -ForegroundColor Gray
+    }
+    
+    # Copy deployment documentation
+    if (Test-Path (Join-Path $sourcePath "DEPLOYMENT.md")) {
+        Copy-Item -Path (Join-Path $sourcePath "DEPLOYMENT.md") -Destination $TargetPath -Force
+        Write-Host "  Copied: DEPLOYMENT.md" -ForegroundColor Gray
+    }
+    if (Test-Path (Join-Path $sourcePath "Deploy-ToServer.ps1")) {
+        Copy-Item -Path (Join-Path $sourcePath "Deploy-ToServer.ps1") -Destination $TargetPath -Force
+        Write-Host "  Copied: Deploy-ToServer.ps1" -ForegroundColor Gray
+    }
+    if (Test-Path (Join-Path $sourcePath "Verify-Installation.ps1")) {
+        Copy-Item -Path (Join-Path $sourcePath "Verify-Installation.ps1") -Destination $TargetPath -Force
+        Write-Host "  Copied: Verify-Installation.ps1" -ForegroundColor Gray
     }
     
     Write-Host "  All files copied successfully" -ForegroundColor Green
