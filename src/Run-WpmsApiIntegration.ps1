@@ -567,158 +567,301 @@ for ($i = 0; $i -lt $totalEndpoints; $i++) {
     Write-Log "Endpoint $endpointNum of $totalEndpoints - $($endpoint.Name)" -Level INFO
     Write-Log "  URI: $($endpoint.Uri)" -Level INFO
     
-    # Log parameters
-    if ($endpoint.Parameters -and $endpoint.Parameters.Count -gt 0) {
-        foreach ($key in $endpoint.Parameters.Keys) {
-            Write-Log "  Parameter: $key = $($endpoint.Parameters[$key])" -Level INFO
+    # Check if this is MOV_ESTAT_PRODUTIVIDADE and process day-by-day
+    $isMov = $endpoint.TargetTable -eq "dbo.MOV_ESTAT_PRODUTIVIDADE" -or $endpoint.Name -match "MOV_ESTAT"
+    
+    if ($isMov) {
+        # Day-by-day import for MOV_ESTAT_PRODUTIVIDADE
+        Write-Log "  Processing day-by-day..." -Level INFO
+        
+        # Determine date range: get last registered date from database, or use last 7 days as fallback
+        $endDate = Get-Date
+        
+        # Query database for last registered date
+        $lastRegisteredDate = $null
+        if ($sqlConnection) {
+            try {
+                $cmd = $sqlConnection.CreateCommand()
+                $cmd.CommandText = "SELECT MAX([Date]) AS LastDate FROM [dbo].[MOV_ESTAT_PRODUTIVIDADE]"
+                $reader = $cmd.ExecuteReader()
+                
+                if ($reader.Read()) {
+                    $lastDateValue = $reader['LastDate']
+                    $reader.Close()
+                    
+                    if ($lastDateValue -and $lastDateValue -ne [DBNull]::Value) {
+                        $lastRegisteredDate = [datetime]$lastDateValue
+                    }
+                }
+            } catch {
+                Write-Log "    Warning: Could not query last registered date: $($_.Exception.Message)" -Level WARNING
+            }
+        }
+        
+        # Set start date based on last registered date or use last 7 days as fallback
+        if ($lastRegisteredDate) {
+            $startDate = $lastRegisteredDate.AddDays(1)
+            Write-Log "    Last registered date: $($lastRegisteredDate.ToString('yyyy-MM-dd'))" -Level INFO
+            Write-Log "    Starting from: $($startDate.ToString('yyyy-MM-dd'))" -Level INFO
+        } else {
+            $startDate = $endDate.AddDays(-6)  # Last 7 days as fallback
+            Write-Log "    No previous data found, using last 7 days as fallback" -Level INFO
+        }
+        
+        $currentDate = $startDate
+        $totalMovRecords = 0
+        $movErrorCount = 0
+        
+        while ($currentDate -le $endDate) {
+            $dateStr = $currentDate.ToString("yyyyMMdd")
+            
+            # Build parameters for this specific date
+            $params = @{
+                DTVL = @{ val1 = $dateStr }
+                ENTI = @{ val1 = "('92','93')"; sig1 = "IN" }
+            }
+            
+            $response = $null
+            $statusCode = $null
+            $itemCount = 0
+            $payloadForSql = $null
+            $retrievedAt = Get-Date
+            $successFlag = $false
+            
+            try {
+                # Build query parameters
+                $queryParams = @()
+                foreach ($key in $params.Keys) {
+                    $paramObj = $params[$key]
+                    $paramJson = ConvertTo-Json -InputObject $paramObj -Compress
+                    $encodedParam = [System.Uri]::EscapeDataString($paramJson)
+                    $queryParams += "$key=$encodedParam"
+                }
+                $fullUri = "$($config.Server)$($endpoint.Uri)" + "?" + ($queryParams -join "&")
+                
+                $response = Invoke-RestApiRequest `
+                    -Method GET `
+                    -Uri $fullUri `
+                    -BearerToken $token
+                
+                $statusCode = $response.StatusCode
+                
+                if ($response.Success -and $response.Content) {
+                    # Extract numbered-key format
+                    $props = $response.Content.PSObject.Properties | Where-Object { $_.Name -match '^\d+$' }
+                    if ($props -and $props.Count -gt 0) {
+                        $itemCount = $props.Count
+                        $dataRows = @($props | ForEach-Object { $_.Value })
+                    } else {
+                        $itemCount = 0
+                        $dataRows = @()
+                    }
+                    
+                    if ($itemCount -gt 0) {
+                        Write-Log "    ${dateStr}: Retrieved $itemCount records" -Level INFO
+                        $successFlag = $true
+                    } else {
+                        Write-Log "    ${dateStr}: No records" -Level INFO
+                        $successFlag = $true
+                    }
+                } else {
+                    Write-Log "    ${dateStr}: API Error" -Level WARNING
+                    $movErrorCount++
+                    $dataRows = @()
+                }
+                
+                # Write data if successful
+                if ($successFlag -and $itemCount -gt 0 -and $sqlConnection -and $endpoint.TargetTable) {
+                    $targetParts = $endpoint.TargetTable.Split('.', 2)
+                    $targetSchema = if ($targetParts.Count -eq 2) { $targetParts[0] } else { 'dbo' }
+                    $targetTableName = if ($targetParts.Count -eq 2) { $targetParts[1] } else { $endpoint.TargetTable }
+                    
+                    try {
+                        Write-EndpointData `
+                            -Connection $sqlConnection `
+                            -SchemaName $targetSchema `
+                            -TableName $targetTableName `
+                            -DataRows $dataRows `
+                            -RetrievedAt $retrievedAt `
+                            -FieldMappings $endpoint.FieldMappings `
+                            -TableSchema $endpoint.TableSchema
+                        
+                        $totalMovRecords += $itemCount
+                    } catch {
+                        Write-Log "    ${dateStr}: SQL Error - $($_.Exception.Message)" -Level ERROR
+                        $movErrorCount++
+                    }
+                }
+            } catch {
+                Write-Log "    ${dateStr}: Exception - $($_.Exception.Message)" -Level ERROR
+                $movErrorCount++
+            }
+            
+            $currentDate = $currentDate.AddDays(1)
+        }
+        
+        if ($movErrorCount -eq 0) {
+            Write-Log "  SQL data write: OK -> [$targetSchema].[$targetTableName] ($totalMovRecords total rows)" -Level SUCCESS
+            $successCount++
+        } else {
+            Write-Log "  Completed with $movErrorCount error(s)" -Level WARNING
+            $failureCount++
         }
     } else {
-        Write-Log "  Parameters: (none)" -Level INFO
-    }
-    
-    # Build full URI
-    $fullUri = "$($config.Server)$($endpoint.Uri)"
-    Write-Log "  Full URI: $fullUri" -Level INFO
-    
-    $response = $null
-    $statusCode = $null
-    $itemCount = 0
-    $payloadForSql = $null
-    $retrievedAt = Get-Date
-    $successFlag = $false
-
-    # Make API call
-    try {
+        # Original logic for other endpoints
+        # Log parameters
         if ($endpoint.Parameters -and $endpoint.Parameters.Count -gt 0) {
-            $response = Invoke-RestApiRequest `
-                -Method GET `
-                -Uri $fullUri `
-                -QueryParameters $endpoint.Parameters `
-                -BearerToken $token
+            foreach ($key in $endpoint.Parameters.Keys) {
+                Write-Log "  Parameter: $key = $($endpoint.Parameters[$key])" -Level INFO
+            }
         } else {
-            $response = Invoke-RestApiRequest `
-                -Method GET `
-                -Uri $fullUri `
-                -BearerToken $token
+            Write-Log "  Parameters: (none)" -Level INFO
         }
+        
+        # Build full URI
+        $fullUri = "$($config.Server)$($endpoint.Uri)"
+        Write-Log "  Full URI: $fullUri" -Level INFO
+        
+        $response = $null
+        $statusCode = $null
+        $itemCount = 0
+        $payloadForSql = $null
+        $retrievedAt = Get-Date
+        $successFlag = $false
 
-        $statusCode = $response.StatusCode
+        # Make API call
+        try {
+            if ($endpoint.Parameters -and $endpoint.Parameters.Count -gt 0) {
+                $response = Invoke-RestApiRequest `
+                    -Method GET `
+                    -Uri $fullUri `
+                    -QueryParameters $endpoint.Parameters `
+                    -BearerToken $token
+            } else {
+                $response = Invoke-RestApiRequest `
+                    -Method GET `
+                    -Uri $fullUri `
+                    -BearerToken $token
+            }
 
-        if ($response.Success) {
-            if ($response.Content) {
-                if ($response.Content -is [array]) {
-                    $itemCount = $response.Content.Count
-                } elseif ($response.Content -is [PSCustomObject]) {
-                    # Check if response has numbered keys ("1", "2", "3"...)
-                    $numericProps = $response.Content.PSObject.Properties | Where-Object { $_.Name -match '^\d+$' }
-                    if ($numericProps -and $numericProps.Count -gt 0) {
-                        $itemCount = $numericProps.Count
+            $statusCode = $response.StatusCode
+
+            if ($response.Success) {
+                if ($response.Content) {
+                    if ($response.Content -is [array]) {
+                        $itemCount = $response.Content.Count
+                    } elseif ($response.Content -is [PSCustomObject]) {
+                        # Check if response has numbered keys ("1", "2", "3"...)
+                        $numericProps = $response.Content.PSObject.Properties | Where-Object { $_.Name -match '^\d+$' }
+                        if ($numericProps -and $numericProps.Count -gt 0) {
+                            $itemCount = $numericProps.Count
+                        } else {
+                            $itemCount = 1
+                        }
                     } else {
                         $itemCount = 1
                     }
-                } else {
-                    $itemCount = 1
-                }
-            }
-
-            Write-Log "  Status: SUCCESS (HTTP $($response.StatusCode))" -Level SUCCESS
-            Write-Log "  Items returned: $itemCount" -Level INFO
-            $successCount++
-            $successFlag = $true
-            if ($response.Content) {
-                $payloadForSql = $response.Content | ConvertTo-Json -Depth 12
-            } elseif ($response.RawContent) {
-                $payloadForSql = $response.RawContent
-            }
-        } else {
-            Write-Log "  Status: FAILED (HTTP $($response.StatusCode))" -Level ERROR
-            Write-Log "  Error: $($response.Error)" -Level ERROR
-            $failureCount++
-            $payloadForSql = if ($response.Error) { $response.Error } else { $response.RawContent }
-        }
-    } catch {
-        Write-Log "  Status: EXCEPTION" -Level ERROR
-        Write-Log "  Error: $($_.Exception.Message)" -Level ERROR
-        $failureCount++
-        $payloadForSql = $_.Exception.Message
-    }
-
-    if ($sqlConnection) {
-        try {
-            if (-not $payloadForSql -and $response -and $response.RawContent) {
-                $payloadForSql = $response.RawContent
-            }
-
-            # Always write to log table (WpmsApiResults)
-            $logParts = $defaultSqlTable.Split('.', 2)
-            $logSchema = if ($logParts.Count -eq 2) { $logParts[0] } else { 'dbo' }
-            $logTable = if ($logParts.Count -eq 2) { $logParts[1] } else { $defaultSqlTable }
-
-            Write-SqlResult `
-                -Connection $sqlConnection `
-                -SchemaName $logSchema `
-                -TableName $logTable `
-                -EndpointName $endpoint.Name `
-                -FullUri $fullUri `
-                -RetrievedAt $retrievedAt `
-                -StatusCode $statusCode `
-                -Success $successFlag `
-                -ItemCount $itemCount `
-                -Payload $payloadForSql
-
-            Write-Log "  SQL log write: OK -> [$logSchema].[$logTable]" -Level SUCCESS
-
-            # Write parsed data to target table if endpoint has TargetTable
-            if ($endpoint.TargetTable -and $successFlag -and $response.Content) {
-                $targetParts = $endpoint.TargetTable.Split('.', 2)
-                $targetSchema = if ($targetParts.Count -eq 2) { $targetParts[0] } else { 'dbo' }
-                $targetTableName = if ($targetParts.Count -eq 2) { $targetParts[1] } else { $endpoint.TargetTable }
-
-                # Handle different response formats:
-                # 1. Array of objects: [{"field":"value"}, {"field":"value"}]
-                # 2. Single object: {"field":"value"}
-                # 3. Object with numbered keys: {"1":{"field":"value"}, "2":{"field":"value"}}
-                $dataRows = @()
-                if ($response.Content -is [array]) {
-                    $dataRows = $response.Content
-                } elseif ($response.Content -is [PSCustomObject]) {
-                    # Check if all properties are numeric keys (format #3)
-                    $props = $response.Content.PSObject.Properties | Where-Object { $_.Name -match '^\d+$' }
-                    if ($props -and $props.Count -gt 0) {
-                        # Extract values from numbered keys
-                        $dataRows = @($props | ForEach-Object { $_.Value })
-                    } else {
-                        # Single object (format #2)
-                        $dataRows = @($response.Content)
-                    }
-                } else {
-                    $dataRows = @($response.Content)
-                }
-                
-                if ($endpoint.FieldMappings -and $endpoint.TableSchema) {
-                    # Use dynamic endpoint data writer
-                    Write-EndpointData `
-                        -Connection $sqlConnection `
-                        -SchemaName $targetSchema `
-                        -TableName $targetTableName `
-                        -DataRows $dataRows `
-                        -RetrievedAt $retrievedAt `
-                        -FieldMappings $endpoint.FieldMappings `
-                        -TableSchema $endpoint.TableSchema
-                } else {
-                    # Fallback to legacy TM_USERS writer
-                    Write-TmUsersData `
-                        -Connection $sqlConnection `
-                        -SchemaName $targetSchema `
-                        -TableName $targetTableName `
-                        -DataRows $dataRows `
-                        -RetrievedAt $retrievedAt
                 }
 
-                Write-Log "  SQL data write: OK -> [$targetSchema].[$targetTableName] ($($dataRows.Count) rows)" -Level SUCCESS
+                Write-Log "  Status: SUCCESS (HTTP $($response.StatusCode))" -Level SUCCESS
+                Write-Log "  Items returned: $itemCount" -Level INFO
+                $successCount++
+                $successFlag = $true
+                if ($response.Content) {
+                    $payloadForSql = $response.Content | ConvertTo-Json -Depth 12
+                } elseif ($response.RawContent) {
+                    $payloadForSql = $response.RawContent
+                }
+            } else {
+                Write-Log "  Status: FAILED (HTTP $($response.StatusCode))" -Level ERROR
+                Write-Log "  Error: $($response.Error)" -Level ERROR
+                $failureCount++
+                $payloadForSql = if ($response.Error) { $response.Error } else { $response.RawContent }
             }
         } catch {
-            Write-Log "  SQL write failed: $($_.Exception.Message)" -Level ERROR
+            Write-Log "  Status: EXCEPTION" -Level ERROR
+            Write-Log "  Error: $($_.Exception.Message)" -Level ERROR
+            $failureCount++
+            $payloadForSql = $_.Exception.Message
+        }
+
+        if ($sqlConnection) {
+            try {
+                if (-not $payloadForSql -and $response -and $response.RawContent) {
+                    $payloadForSql = $response.RawContent
+                }
+
+                # Always write to log table (WpmsApiResults)
+                $logParts = $defaultSqlTable.Split('.', 2)
+                $logSchema = if ($logParts.Count -eq 2) { $logParts[0] } else { 'dbo' }
+                $logTable = if ($logParts.Count -eq 2) { $logParts[1] } else { $defaultSqlTable }
+
+                Write-SqlResult `
+                    -Connection $sqlConnection `
+                    -SchemaName $logSchema `
+                    -TableName $logTable `
+                    -EndpointName $endpoint.Name `
+                    -FullUri $fullUri `
+                    -RetrievedAt $retrievedAt `
+                    -StatusCode $statusCode `
+                    -Success $successFlag `
+                    -ItemCount $itemCount `
+                    -Payload $payloadForSql
+
+                Write-Log "  SQL log write: OK -> [$logSchema].[$logTable]" -Level SUCCESS
+
+                # Write parsed data to target table if endpoint has TargetTable
+                if ($endpoint.TargetTable -and $successFlag -and $response.Content) {
+                    $targetParts = $endpoint.TargetTable.Split('.', 2)
+                    $targetSchema = if ($targetParts.Count -eq 2) { $targetParts[0] } else { 'dbo' }
+                    $targetTableName = if ($targetParts.Count -eq 2) { $targetParts[1] } else { $endpoint.TargetTable }
+
+                    # Handle different response formats:
+                    # 1. Array of objects: [{"field":"value"}, {"field":"value"}]
+                    # 2. Single object: {"field":"value"}
+                    # 3. Object with numbered keys: {"1":{"field":"value"}, "2":{"field":"value"}}
+                    $dataRows = @()
+                    if ($response.Content -is [array]) {
+                        $dataRows = $response.Content
+                    } elseif ($response.Content -is [PSCustomObject]) {
+                        # Check if all properties are numeric keys (format #3)
+                        $props = $response.Content.PSObject.Properties | Where-Object { $_.Name -match '^\d+$' }
+                        if ($props -and $props.Count -gt 0) {
+                            # Extract values from numbered keys
+                            $dataRows = @($props | ForEach-Object { $_.Value })
+                        } else {
+                            # Single object (format #2)
+                            $dataRows = @($response.Content)
+                        }
+                    } else {
+                        $dataRows = @($response.Content)
+                    }
+                    
+                    if ($endpoint.FieldMappings -and $endpoint.TableSchema) {
+                        # Use dynamic endpoint data writer
+                        Write-EndpointData `
+                            -Connection $sqlConnection `
+                            -SchemaName $targetSchema `
+                            -TableName $targetTableName `
+                            -DataRows $dataRows `
+                            -RetrievedAt $retrievedAt `
+                            -FieldMappings $endpoint.FieldMappings `
+                            -TableSchema $endpoint.TableSchema
+                    } else {
+                        # Fallback to legacy TM_USERS writer
+                        Write-TmUsersData `
+                            -Connection $sqlConnection `
+                            -SchemaName $targetSchema `
+                            -TableName $targetTableName `
+                            -DataRows $dataRows `
+                            -RetrievedAt $retrievedAt
+                    }
+
+                    Write-Log "  SQL data write: OK -> [$targetSchema].[$targetTableName] ($($dataRows.Count) rows)" -Level SUCCESS
+                }
+            } catch {
+                Write-Log "  SQL write failed: $($_.Exception.Message)" -Level ERROR
+            }
         }
     }
 }

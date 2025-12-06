@@ -21,7 +21,7 @@
 
 param(
     [Parameter(Mandatory=$false)]
-    [string]$StartDate = "20250101",
+    [string]$StartDate,
     
     [Parameter(Mandatory=$false)]
     [string]$EndDate,
@@ -52,28 +52,36 @@ if ([string]::IsNullOrEmpty($EndDate)) {
 
 Write-Host "=== MOV_ESTAT_PRODUTIVIDADE Historical Data Import ===" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "Date Range: $StartDate to $EndDate" -ForegroundColor White
+if (-not [string]::IsNullOrEmpty($StartDate)) {
+    Write-Host "Date Range: $StartDate to $EndDate" -ForegroundColor White
+} else {
+    Write-Host "Date Range: (will be determined from database) to $EndDate" -ForegroundColor White
+}
 if ($DryRun) {
     Write-Host "Mode: DRY RUN (no changes will be made)" -ForegroundColor Yellow
 }
 Write-Host ""
 
-# Validate dates
+# Validate end date format
 try {
-    $startDateTime = [datetime]::ParseExact($StartDate, 'yyyyMMdd', $null)
     $endDateTime = [datetime]::ParseExact($EndDate, 'yyyyMMdd', $null)
-    
-    if ($startDateTime -gt $endDateTime) {
-        Write-Host "ERROR: Start date cannot be after end date" -ForegroundColor Red
+} catch {
+    Write-Host "ERROR: Invalid end date format. Use yyyyMMdd (e.g., 20250101)" -ForegroundColor Red
+    exit 1
+}
+
+# If start date provided, validate it
+if (-not [string]::IsNullOrEmpty($StartDate)) {
+    try {
+        $startDateTime = [datetime]::ParseExact($StartDate, 'yyyyMMdd', $null)
+        if ($startDateTime -gt $endDateTime) {
+            Write-Host "ERROR: Start date cannot be after end date" -ForegroundColor Red
+            exit 1
+        }
+    } catch {
+        Write-Host "ERROR: Invalid start date format. Use yyyyMMdd (e.g., 20250101)" -ForegroundColor Red
         exit 1
     }
-    
-    $dayCount = ($endDateTime - $startDateTime).Days + 1
-    Write-Host "Importing data for $dayCount days..." -ForegroundColor Green
-    Write-Host ""
-} catch {
-    Write-Host "ERROR: Invalid date format. Use yyyyMMdd (e.g., 20250101)" -ForegroundColor Red
-    exit 1
 }
 
 # Load configuration
@@ -154,6 +162,58 @@ try {
     Write-Host "ERROR: SQL connection failed: $($_.Exception.Message)" -ForegroundColor Red
     exit 1
 }
+
+# Get last registered date if start date not provided
+if ([string]::IsNullOrEmpty($StartDate)) {
+    Write-Host ""
+    Write-Host "[3.5/5] Retrieving last registered date from database..." -ForegroundColor Yellow
+    try {
+        $cmd = $sqlConnection.CreateCommand()
+        $cmd.CommandText = "SELECT MAX([Date]) AS LastDate FROM [dbo].[MOV_ESTAT_PRODUTIVIDADE]"
+        $reader = $cmd.ExecuteReader()
+        
+        if ($reader.Read()) {
+            $lastDate = $reader['LastDate']
+            $reader.Close()
+            
+            if ($lastDate -and $lastDate -ne [DBNull]::Value) {
+                $startDateTime = ([datetime]$lastDate).AddDays(1)
+                $StartDate = $startDateTime.ToString('yyyyMMdd')
+                Write-Host "  Last registered date: $lastDate" -ForegroundColor Green
+                Write-Host "  Starting import from: $StartDate (next day)" -ForegroundColor Green
+            } else {
+                Write-Host "  No existing data found in table" -ForegroundColor Yellow
+                Write-Host "  Starting import from: $EndDate (today)" -ForegroundColor Yellow
+                $startDateTime = $endDateTime
+                $StartDate = $EndDate
+            }
+        } else {
+            $reader.Close()
+            Write-Host "  Error querying database" -ForegroundColor Yellow
+            Write-Host "  Starting import from: $EndDate (today)" -ForegroundColor Yellow
+            $startDateTime = $endDateTime
+            $StartDate = $EndDate
+        }
+    } catch {
+        Write-Host "  Warning: Could not retrieve last date: $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Host "  Starting import from: $EndDate (today)" -ForegroundColor Yellow
+        $startDateTime = $endDateTime
+        $StartDate = $EndDate
+    }
+} else {
+    $startDateTime = [datetime]::ParseExact($StartDate, 'yyyyMMdd', $null)
+}
+
+# Validate date range and calculate day count
+if ($startDateTime -gt $endDateTime) {
+    Write-Host "Start date is after end date. Adjusting start date to end date." -ForegroundColor Yellow
+    $startDateTime = $endDateTime
+}
+
+$dayCount = ($endDateTime - $startDateTime).Days + 1
+Write-Host ""
+Write-Host "Importing data for $dayCount day(s)..." -ForegroundColor Green
+Write-Host ""
 
 # Load endpoint configuration
 Write-Host ""
